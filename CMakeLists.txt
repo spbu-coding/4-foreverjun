@@ -3,7 +3,7 @@ project(tests LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_executable(src\converter)
-add_executable(scr\comparer)
+add_executable(src/converter)
+add_executable(scr/comparer)
 
 
