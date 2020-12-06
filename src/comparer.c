@@ -16,6 +16,13 @@
 
 #define HEADER_SIZE 0x36
 
+void free_pointers_arr (int number,uint8_t **arr_pointers)
+{
+    for (int i = 0; i < number; i++){
+        free(arr_pointers[i]);
+    }
+    free(arr_pointers);
+}
 int read_and_check_header (uint32_t *header, FILE *input_file,char *file_name)
 {
     unsigned int real_file_size;
@@ -103,25 +110,36 @@ int compare_8bit (uint32_t *first_header, FILE *first_input_file, uint32_t *seco
         bytes_in_second_palette_arr = first_header[NUMBER_OF_COLORS_IN_PALETTE_A] * 4;
     long x = 0, y = 0;
     long long i, m = 0, extension_to_DWORD32 = (4 - first_header[WIDTH_A] % 4) % 4;
-    uint8_t *first_palette, *second_palette, *first_pixels, *second_pixels;
+    uint8_t *first_palette, *second_palette, *first_pixels, *second_pixels, **pointers;
+
+    const int number_of_pointers = 4;
+
     if (first_header[WIDTH_A] != second_header[WIDTH_A] ||
     abs((signed)first_header[HEIGHT_A]) != abs((signed)second_header[HEIGHT_A])){
         error("The linear dimensions of the images do not coincide");
         return -1;
+
+    }if ((pointers = malloc(sizeof(uint8_t*) * number_of_pointers)) == NULL) {
+        error("Memory allocation error.");
+        return -1;
     }
+
     if ((first_palette = calloc(bytes_in_first_palette_arr, sizeof(uint8_t))) == NULL) {
         error("Memory allocation error.");
+        free(pointers);
         return -1;
     }
     if ((first_pixels = calloc(bytes_in_pixel_arr, sizeof(uint8_t))) == NULL) {
         error("Memory allocation error.");
         free(first_palette);
+        free(pointers);
         return -1;
     }
     if ((second_palette = calloc(bytes_in_second_palette_arr, sizeof(uint8_t))) == NULL) {
         error("Memory allocation error.");
         free(first_palette);
         free(first_pixels);
+        free(pointers);
         return -1;
     }
     if ((second_pixels = calloc(bytes_in_pixel_arr, sizeof(uint8_t))) == NULL) {
@@ -129,13 +147,17 @@ int compare_8bit (uint32_t *first_header, FILE *first_input_file, uint32_t *seco
         free(first_palette);
         free(first_pixels);
         free(second_palette);
+        free(pointers);
         return -1;
     }
+
+    *pointers = first_palette;
+    *(pointers + 1) = first_pixels;
+    *(pointers + 2) = second_palette;
+    *(pointers + 3) = second_pixels;
+
     if (fread(first_palette, sizeof(uint8_t), bytes_in_first_palette_arr, first_input_file) != bytes_in_first_palette_arr){
-        free(first_palette);
-        free(first_pixels);
-        free(second_palette);
-        free(second_pixels);
+        free_pointers_arr(number_of_pointers, pointers);
         if (feof(first_input_file))
             error("Palette read error. End of file.");
         else
@@ -143,10 +165,7 @@ int compare_8bit (uint32_t *first_header, FILE *first_input_file, uint32_t *seco
         return -1;
     }
     if (fread(first_pixels, sizeof(uint8_t), bytes_in_pixel_arr, first_input_file) != bytes_in_pixel_arr) {
-        free(first_palette);
-        free(first_pixels);
-        free(second_palette);
-        free(second_pixels);
+        free_pointers_arr(number_of_pointers, pointers);
         if (feof(first_input_file))
             error("Pixel read error. End of file.");
         else
@@ -154,10 +173,7 @@ int compare_8bit (uint32_t *first_header, FILE *first_input_file, uint32_t *seco
         return -1;
     }
     if (fread(second_palette, sizeof(uint8_t), bytes_in_second_palette_arr, second_input_file) != bytes_in_second_palette_arr) {
-        free(first_palette);
-        free(first_pixels);
-        free(second_palette);
-        free(second_pixels);
+        free_pointers_arr(number_of_pointers, pointers);
         if (feof(second_input_file))
             error("Palette array read error. End of file.");
         else
@@ -165,10 +181,7 @@ int compare_8bit (uint32_t *first_header, FILE *first_input_file, uint32_t *seco
         return -1;
     }
     if (fread(second_pixels, sizeof(uint8_t), bytes_in_pixel_arr, second_input_file) != bytes_in_pixel_arr) {
-        free(first_palette);
-        free(first_pixels);
-        free(second_palette);
-        free(second_pixels);
+        free_pointers_arr(number_of_pointers, pointers);
         if (feof(second_input_file))
             error("Pixel array read error. End of file.");
         else
@@ -178,6 +191,10 @@ int compare_8bit (uint32_t *first_header, FILE *first_input_file, uint32_t *seco
     fclose(first_input_file);
     fclose(second_input_file);
     for (i = 0; i < bytes_in_pixel_arr ; i++) {
+        if (first_pixels[i] > first_header[NUMBER_OF_COLORS_IN_PALETTE_A] || second_pixels[i] > second_header[NUMBER_OF_COLORS_IN_PALETTE_A]){
+            error("Address value in a cell of a pixel array does not correspond to the number of colors in the palette (array overflow).");
+            return -1;
+        }
         if ((first_palette[first_pixels[i]] != second_palette[second_pixels[i]]) && m <= 100){
             fprintf(stderr, "(%ld , %ld)\n", x, y);
             m ++;
@@ -189,14 +206,10 @@ int compare_8bit (uint32_t *first_header, FILE *first_input_file, uint32_t *seco
         }
         x++;
     }
-    free(first_palette);
-    free(first_pixels);
-    free(second_palette);
-    free(second_pixels);
-    if (m == 0)
-        return 0;
-    else
+    free_pointers_arr(number_of_pointers, pointers);
+    if (m != 0)
         return 1;
+    return 0;
 }
 
 int compare_24bit (uint32_t *first_header, FILE *first_input_file, uint32_t *second_header, FILE *second_input_file)
@@ -267,10 +280,9 @@ int compare_24bit (uint32_t *first_header, FILE *first_input_file, uint32_t *sec
     }
     free(first_pixels);
     free(second_pixels);
-    if (m == 0)
-        return 0;
-    else
+    if (m != 0)
         return 1;
+    return 0;
 }
 
 int main(int argc, char *argv[]){
